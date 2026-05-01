@@ -8,9 +8,11 @@
 
 #include <fcntl.h>
 #include <linux/fanotify.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 static int failures;
@@ -525,6 +527,32 @@ static void test_policy_burst_window_reset_and_gc(void)
 	CHECK(unlink(path) == 0);
 }
 
+static void test_output_subscriber_closed_no_sigpipe(void)
+{
+	struct sigaction sa = { .sa_handler = SIG_DFL };
+	sigemptyset(&sa.sa_mask);
+	CHECK(sigaction(SIGPIPE, &sa, NULL) == 0);
+
+	int sv[2];
+	CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+
+	struct out_sink out;
+	out_init(&out);
+	out.sub_fds = malloc(sizeof *out.sub_fds);
+	CHECK(out.sub_fds != NULL);
+	out.sub_cap = 1;
+	out.sub_fds[0] = sv[0];
+	out.sub_len = 1;
+
+	close(sv[1]);
+
+	const char line[] = "hello";
+	CHECK(out_emit_line(&out, line, sizeof line - 1) == 0);
+	CHECK(out.sub_len == 0);
+
+	out_free(&out);
+}
+
 int main(void)
 {
 	test_json_escape();
@@ -540,6 +568,7 @@ int main(void)
 	test_policy_canary_alerts();
 	test_policy_burst_behavior();
 	test_policy_burst_window_reset_and_gc();
+	test_output_subscriber_closed_no_sigpipe();
 	if (failures) {
 		fprintf(stderr, "%d test failure(s)\n", failures);
 		return 1;

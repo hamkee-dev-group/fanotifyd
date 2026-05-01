@@ -199,7 +199,9 @@ int daemon_run(struct daemon_cfg *cfg)
 		}
 	}
 
-	 
+
+	signal(SIGPIPE, SIG_IGN);
+
 	sigset_t mask;
 	sigemptyset(&mask);
 	sigaddset(&mask, SIGINT);

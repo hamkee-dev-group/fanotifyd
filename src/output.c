@@ -179,9 +179,9 @@ int out_emit_line(struct out_sink *o, const char *line, size_t len)
 
 	for (size_t i = 0; i < o->sub_len; ) {
 		int fd = o->sub_fds[i];
-		ssize_t w1 = write(fd, line, len);
+		ssize_t w1 = send(fd, line, len, MSG_NOSIGNAL);
 		if (w1 < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-			 
+
 			log_debug("dropping slow subscriber fd=%d", fd);
 			sub_drop(o, i);
 			continue;
@@ -190,7 +190,7 @@ int out_emit_line(struct out_sink *o, const char *line, size_t len)
 			sub_drop(o, i);
 			continue;
 		}
-		ssize_t w2 = write(fd, "\n", 1);
+		ssize_t w2 = send(fd, "\n", 1, MSG_NOSIGNAL);
 		if (w2 != 1) {
 			sub_drop(o, i);
 			continue;
