@@ -135,6 +135,25 @@ int daemon_cfg_set_job_path(struct daemon_cfg *c, const char *job_id,
 	return 0;
 }
 
+static int parse_u32_strict(const char *s, uint32_t *out)
+{
+	if (!s || !*s)
+		return -1;
+	if (!isdigit((unsigned char)*s))
+		return -1;
+	errno = 0;
+	char *end = NULL;
+	unsigned long v = strtoul(s, &end, 10);
+	if (errno == ERANGE)
+		return -1;
+	if (!end || *end != '\0')
+		return -1;
+	if (v > UINT32_MAX)
+		return -1;
+	*out = (uint32_t)v;
+	return 0;
+}
+
 static char *trim(char *s)
 {
 	while (*s && isspace((unsigned char)*s))
@@ -260,11 +279,26 @@ int daemon_cfg_load_file(struct daemon_cfg *c, const char *path)
 			free(c->pid_file);
 			c->pid_file = strdup(val);
 		} else if (strcmp(key, "burst_threshold") == 0) {
-			c->burst_threshold = (uint32_t)strtoul(val, NULL, 10);
+			if (parse_u32_strict(val, &c->burst_threshold) < 0) {
+				fprintf(stderr, "config:%d: invalid %s value '%s'\n",
+				        lineno, key, val);
+				rc = -1;
+				break;
+			}
 		} else if (strcmp(key, "burst_window_ms") == 0) {
-			c->burst_window_ms = (uint32_t)strtoul(val, NULL, 10);
+			if (parse_u32_strict(val, &c->burst_window_ms) < 0) {
+				fprintf(stderr, "config:%d: invalid %s value '%s'\n",
+				        lineno, key, val);
+				rc = -1;
+				break;
+			}
 		} else if (strcmp(key, "hook_cooldown_ms") == 0) {
-			c->hook_cooldown_ms = (uint32_t)strtoul(val, NULL, 10);
+			if (parse_u32_strict(val, &c->hook_cooldown_ms) < 0) {
+				fprintf(stderr, "config:%d: invalid %s value '%s'\n",
+				        lineno, key, val);
+				rc = -1;
+				break;
+			}
 		} else if (strcmp(key, "foreground") == 0) {
 			c->foreground = atoi(val) ? 1 : 0;
 		} else if (strcmp(key, "perm") == 0) {
@@ -408,9 +442,27 @@ int daemon_cfg_parse_argv(struct daemon_cfg *c, int argc, char **argv)
 		case OPT_SOCKET:free(c->socket_path);  c->socket_path = strdup(optarg); break;
 		case OPT_HOOK:  free(c->hook_cmd);     c->hook_cmd = strdup(optarg); break;
 		case OPT_PIDFILE: free(c->pid_file);   c->pid_file = strdup(optarg); break;
-		case OPT_BURST_T:  c->burst_threshold  = (uint32_t)strtoul(optarg, NULL, 10); break;
-		case OPT_BURST_W:  c->burst_window_ms  = (uint32_t)strtoul(optarg, NULL, 10); break;
-		case OPT_COOLDOWN: c->hook_cooldown_ms = (uint32_t)strtoul(optarg, NULL, 10); break;
+		case OPT_BURST_T:
+			if (parse_u32_strict(optarg, &c->burst_threshold) < 0) {
+				fprintf(stderr, "%s: invalid --burst-threshold value '%s'\n",
+				        prog, optarg);
+				return -1;
+			}
+			break;
+		case OPT_BURST_W:
+			if (parse_u32_strict(optarg, &c->burst_window_ms) < 0) {
+				fprintf(stderr, "%s: invalid --burst-window-ms value '%s'\n",
+				        prog, optarg);
+				return -1;
+			}
+			break;
+		case OPT_COOLDOWN:
+			if (parse_u32_strict(optarg, &c->hook_cooldown_ms) < 0) {
+				fprintf(stderr, "%s: invalid --hook-cooldown-ms value '%s'\n",
+				        prog, optarg);
+				return -1;
+			}
+			break;
 		case 'f':          c->foreground = 1;   break;
 		case OPT_PERM:     c->want_perm = 1;    break;
 		case OPT_DENY_ON_ALERT: c->deny_on_alert = 1; break;

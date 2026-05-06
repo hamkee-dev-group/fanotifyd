@@ -7,6 +7,7 @@
 #include "util.h"
 
 #include <fcntl.h>
+#include <getopt.h>
 #include <linux/fanotify.h>
 #include <signal.h>
 #include <stdio.h>
@@ -527,6 +528,104 @@ static void test_policy_burst_window_reset_and_gc(void)
 	CHECK(unlink(path) == 0);
 }
 
+static void test_config_load_file_rejects_invalid_u32(void)
+{
+	const char *keys[] = {
+		"burst_threshold",
+		"burst_window_ms",
+		"hook_cooldown_ms",
+	};
+	const char *bad_vals[] = { "abc", "12ms", "-1", "4294967296" };
+
+	for (size_t k = 0; k < sizeof keys / sizeof keys[0]; k++) {
+		for (size_t v = 0; v < sizeof bad_vals / sizeof bad_vals[0]; v++) {
+			char path[] = "/tmp/fanotifyd-config-XXXXXX";
+			char contents[128];
+			snprintf(contents, sizeof contents, "%s %s\n",
+			         keys[k], bad_vals[v]);
+
+			if (write_temp_config(path, sizeof path, contents) < 0) {
+				CHECK(0);
+				continue;
+			}
+
+			struct daemon_cfg cfg;
+			daemon_cfg_init(&cfg);
+			CHECK(daemon_cfg_load_file(&cfg, path) == -1);
+			daemon_cfg_free(&cfg);
+			CHECK(unlink(path) == 0);
+		}
+	}
+}
+
+static void test_config_load_file_accepts_valid_u32(void)
+{
+	struct daemon_cfg cfg;
+	char path[] = "/tmp/fanotifyd-config-XXXXXX";
+	const char *contents =
+		"burst_threshold 0\n"
+		"burst_window_ms 1500\n"
+		"hook_cooldown_ms 4294967295\n";
+
+	if (write_temp_config(path, sizeof path, contents) < 0) {
+		CHECK(0);
+		return;
+	}
+
+	daemon_cfg_init(&cfg);
+	CHECK(daemon_cfg_load_file(&cfg, path) == 0);
+	CHECK(cfg.burst_threshold == 0);
+	CHECK(cfg.burst_window_ms == 1500);
+	CHECK(cfg.hook_cooldown_ms == 4294967295U);
+	daemon_cfg_free(&cfg);
+	CHECK(unlink(path) == 0);
+}
+
+static void test_parse_argv_rejects_invalid_u32(void)
+{
+	const char *flags[] = {
+		"--burst-threshold",
+		"--burst-window-ms",
+		"--hook-cooldown-ms",
+	};
+	const char *bad_vals[] = { "abc", "12ms", "-1", "4294967296" };
+
+	for (size_t f = 0; f < sizeof flags / sizeof flags[0]; f++) {
+		for (size_t v = 0; v < sizeof bad_vals / sizeof bad_vals[0]; v++) {
+			optind = 0;
+			char *argv[] = {
+				(char *)"fanotifyd",
+				(char *)flags[f],
+				(char *)bad_vals[v],
+				NULL,
+			};
+			struct daemon_cfg cfg;
+			daemon_cfg_init(&cfg);
+			CHECK(daemon_cfg_parse_argv(&cfg, 3, argv) == -1);
+			daemon_cfg_free(&cfg);
+		}
+	}
+}
+
+static void test_parse_argv_accepts_valid_u32(void)
+{
+	optind = 0;
+	char *argv[] = {
+		(char *)"fanotifyd",
+		(char *)"--burst-threshold", (char *)"0",
+		(char *)"--burst-window-ms", (char *)"250",
+		(char *)"--hook-cooldown-ms", (char *)"4294967295",
+		NULL,
+	};
+	struct daemon_cfg cfg;
+	daemon_cfg_init(&cfg);
+	CHECK(daemon_cfg_parse_argv(&cfg, 7, argv) == 0);
+	CHECK(cfg.burst_threshold == 0);
+	CHECK(cfg.burst_window_ms == 250);
+	CHECK(cfg.hook_cooldown_ms == 4294967295U);
+	daemon_cfg_free(&cfg);
+}
+
 static void test_output_subscriber_closed_no_sigpipe(void)
 {
 	struct sigaction sa = { .sa_handler = SIG_DFL };
@@ -568,6 +667,10 @@ int main(void)
 	test_policy_canary_alerts();
 	test_policy_burst_behavior();
 	test_policy_burst_window_reset_and_gc();
+	test_config_load_file_rejects_invalid_u32();
+	test_config_load_file_accepts_valid_u32();
+	test_parse_argv_rejects_invalid_u32();
+	test_parse_argv_accepts_valid_u32();
 	test_output_subscriber_closed_no_sigpipe();
 	if (failures) {
 		fprintf(stderr, "%d test failure(s)\n", failures);
