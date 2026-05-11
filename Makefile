@@ -25,7 +25,7 @@ SRC := \
 OBJ := $(SRC:.c=.o)
 BIN := fanotifyd
 
-UNIT_SRC := tests/unit_main.c src/buf.c src/util.c src/log.c src/config.c src/output.c src/path.c src/policy.c src/fan.c
+UNIT_SRC := tests/unit_main.c src/buf.c src/util.c src/log.c src/config.c src/output.c src/path.c src/policy.c src/fan.c src/daemon.c
 UNIT_BIN := tests/unit
 PIVOT_BIN := tests/pivot_writer
 

@@ -82,6 +82,94 @@ static void on_event(const struct fan_event *ev, void *user)
 	}
 }
 
+const struct event_loop_syscalls daemon_default_syscalls = {
+	.signalfd        = signalfd,
+	.timerfd_create  = timerfd_create,
+	.timerfd_settime = timerfd_settime,
+	.epoll_create1   = epoll_create1,
+	.epoll_ctl       = epoll_ctl,
+};
+
+int daemon_setup_event_loop(const struct event_loop_syscalls *sc,
+                            const sigset_t *mask,
+                            int fanfd, int listenfd,
+                            int *sigfd_out, int *tickfd_out, int *ep_out)
+{
+	int sigfd = -1, tickfd = -1, ep = -1;
+	int err = 0;
+
+	sigfd = sc->signalfd(-1, mask, SFD_CLOEXEC | SFD_NONBLOCK);
+	if (sigfd < 0) {
+		err = errno;
+		log_err("signalfd: %s", strerror(err));
+		goto fail;
+	}
+
+	tickfd = sc->timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
+	if (tickfd < 0) {
+		err = errno;
+		log_err("timerfd_create: %s", strerror(err));
+		goto fail;
+	}
+
+	struct itimerspec ts = {
+		.it_value    = { .tv_sec = 1 },
+		.it_interval = { .tv_sec = 1 },
+	};
+	if (sc->timerfd_settime(tickfd, 0, &ts, NULL) < 0) {
+		err = errno;
+		log_err("timerfd_settime: %s", strerror(err));
+		goto fail;
+	}
+
+	ep = sc->epoll_create1(EPOLL_CLOEXEC);
+	if (ep < 0) {
+		err = errno;
+		log_err("epoll_create1: %s", strerror(err));
+		goto fail;
+	}
+
+	struct epoll_event ee = { .events = EPOLLIN };
+	ee.data.fd = fanfd;
+	if (sc->epoll_ctl(ep, EPOLL_CTL_ADD, fanfd, &ee) < 0) {
+		err = errno;
+		log_err("epoll_ctl(fanfd): %s", strerror(err));
+		goto fail;
+	}
+	ee.data.fd = sigfd;
+	if (sc->epoll_ctl(ep, EPOLL_CTL_ADD, sigfd, &ee) < 0) {
+		err = errno;
+		log_err("epoll_ctl(sigfd): %s", strerror(err));
+		goto fail;
+	}
+	ee.data.fd = tickfd;
+	if (sc->epoll_ctl(ep, EPOLL_CTL_ADD, tickfd, &ee) < 0) {
+		err = errno;
+		log_err("epoll_ctl(tickfd): %s", strerror(err));
+		goto fail;
+	}
+	if (listenfd >= 0) {
+		ee.data.fd = listenfd;
+		if (sc->epoll_ctl(ep, EPOLL_CTL_ADD, listenfd, &ee) < 0) {
+			err = errno;
+			log_err("epoll_ctl(listenfd): %s", strerror(err));
+			goto fail;
+		}
+	}
+
+	*sigfd_out = sigfd;
+	*tickfd_out = tickfd;
+	*ep_out = ep;
+	return 0;
+
+fail:
+	if (ep >= 0) close(ep);
+	if (tickfd >= 0) close(tickfd);
+	if (sigfd >= 0) close(sigfd);
+	errno = err;
+	return -1;
+}
+
 static int do_daemonize(const char *pid_file)
 {
 	pid_t pid = fork();
@@ -216,23 +304,15 @@ int daemon_run(struct daemon_cfg *cfg)
 		out_free(&out);
 		return 1;
 	}
-	int sigfd = signalfd(-1, &mask, SFD_CLOEXEC | SFD_NONBLOCK);
-
-	int tickfd = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC | TFD_NONBLOCK);
-	struct itimerspec ts = {
-		.it_value    = { .tv_sec = 1 },
-		.it_interval = { .tv_sec = 1 },
-	};
-	timerfd_settime(tickfd, 0, &ts, NULL);
-
-	int ep = epoll_create1(EPOLL_CLOEXEC);
-	struct epoll_event ee = { .events = EPOLLIN };
-	ee.data.fd = fanfd; epoll_ctl(ep, EPOLL_CTL_ADD, fanfd, &ee);
-	ee.data.fd = sigfd; epoll_ctl(ep, EPOLL_CTL_ADD, sigfd, &ee);
-	ee.data.fd = tickfd; epoll_ctl(ep, EPOLL_CTL_ADD, tickfd, &ee);
-	if (out_listen_fd(&out) >= 0) {
-		ee.data.fd = out_listen_fd(&out);
-		epoll_ctl(ep, EPOLL_CTL_ADD, out_listen_fd(&out), &ee);
+	int sigfd = -1, tickfd = -1, ep = -1;
+	if (daemon_setup_event_loop(&daemon_default_syscalls, &mask,
+	                            fanfd, out_listen_fd(&out),
+	                            &sigfd, &tickfd, &ep) < 0) {
+		close(fanfd);
+		mount_db_free(&mdb);
+		policy_free(policy);
+		out_free(&out);
+		return 1;
 	}
 
 	struct ctx c = {

@@ -1,11 +1,14 @@
 #include "config.h"
 #include "buf.h"
+#include "daemon.h"
 #include "fan.h"
 #include "output.h"
 #include "path.h"
 #include "policy.h"
 #include "util.h"
 
+#include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <getopt.h>
 #include <linux/fanotify.h>
@@ -652,6 +655,169 @@ static void test_output_subscriber_closed_no_sigpipe(void)
 	out_free(&out);
 }
 
+static int count_open_fds(void)
+{
+	DIR *d = opendir("/proc/self/fd");
+	if (!d) return -1;
+	int count = 0;
+	struct dirent *e;
+	while ((e = readdir(d)) != NULL) {
+		if (e->d_name[0] != '.')
+			count++;
+	}
+	closedir(d);
+	return count;
+}
+
+static int redirect_stderr_to_file(int *saved_fd_out, char path[], size_t pathsz)
+{
+	snprintf(path, pathsz, "/tmp/fanotifyd-stderr-XXXXXX");
+	int fd = mkstemp(path);
+	if (fd < 0) return -1;
+	fflush(stderr);
+	int saved = dup(STDERR_FILENO);
+	if (saved < 0) { close(fd); unlink(path); return -1; }
+	if (dup2(fd, STDERR_FILENO) < 0) {
+		close(saved); close(fd); unlink(path); return -1;
+	}
+	close(fd);
+	*saved_fd_out = saved;
+	return 0;
+}
+
+static void restore_stderr(int saved_fd)
+{
+	fflush(stderr);
+	dup2(saved_fd, STDERR_FILENO);
+	close(saved_fd);
+}
+
+static char *read_file_to_string(const char *path)
+{
+	int fd = open(path, O_RDONLY);
+	if (fd < 0) return NULL;
+	char *c = slurp_fd(fd);
+	close(fd);
+	return c;
+}
+
+static int fail_signalfd(int fd, const sigset_t *mask, int flags)
+{
+	(void)fd; (void)mask; (void)flags;
+	errno = EMFILE;
+	return -1;
+}
+
+static int fail_timerfd_create(int clockid, int flags)
+{
+	(void)clockid; (void)flags;
+	errno = EMFILE;
+	return -1;
+}
+
+static int fail_timerfd_settime(int fd, int flags,
+                                const struct itimerspec *nv,
+                                struct itimerspec *ov)
+{
+	(void)fd; (void)flags; (void)nv; (void)ov;
+	errno = EINVAL;
+	return -1;
+}
+
+static int fail_epoll_create1(int flags)
+{
+	(void)flags;
+	errno = ENOMEM;
+	return -1;
+}
+
+static int fail_epoll_ctl(int epfd, int op, int fd, struct epoll_event *event)
+{
+	(void)epfd; (void)op; (void)fd; (void)event;
+	errno = ENOSPC;
+	return -1;
+}
+
+static void run_event_loop_setup_fault(const struct event_loop_syscalls *sc,
+                                       int expected_errno,
+                                       const char *expected_token)
+{
+	int fanfd = open("/dev/null", O_RDONLY);
+	CHECK(fanfd >= 0);
+	if (fanfd < 0) return;
+
+	int baseline = count_open_fds();
+
+	sigset_t mask;
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGTERM);
+
+	int saved_stderr = -1;
+	char log_path[64];
+	if (redirect_stderr_to_file(&saved_stderr, log_path, sizeof log_path) < 0) {
+		CHECK(0);
+		close(fanfd);
+		return;
+	}
+
+	int sigfd = -1, tickfd = -1, ep = -1;
+	int rc = daemon_setup_event_loop(sc, &mask, fanfd, -1,
+	                                 &sigfd, &tickfd, &ep);
+	int saved_errno = errno;
+
+	restore_stderr(saved_stderr);
+
+	CHECK(rc == -1);
+	CHECK(saved_errno == expected_errno);
+	CHECK(count_open_fds() == baseline);
+
+	char *log = read_file_to_string(log_path);
+	CHECK(log != NULL);
+	if (log) {
+		CHECK_CONTAINS(log, expected_token);
+		CHECK_CONTAINS(log, strerror(expected_errno));
+	}
+	free(log);
+	unlink(log_path);
+
+	close(fanfd);
+}
+
+static void test_daemon_setup_event_loop_signalfd_fails(void)
+{
+	struct event_loop_syscalls sc = daemon_default_syscalls;
+	sc.signalfd = fail_signalfd;
+	run_event_loop_setup_fault(&sc, EMFILE, "signalfd");
+}
+
+static void test_daemon_setup_event_loop_timerfd_create_fails(void)
+{
+	struct event_loop_syscalls sc = daemon_default_syscalls;
+	sc.timerfd_create = fail_timerfd_create;
+	run_event_loop_setup_fault(&sc, EMFILE, "timerfd_create");
+}
+
+static void test_daemon_setup_event_loop_timerfd_settime_fails(void)
+{
+	struct event_loop_syscalls sc = daemon_default_syscalls;
+	sc.timerfd_settime = fail_timerfd_settime;
+	run_event_loop_setup_fault(&sc, EINVAL, "timerfd_settime");
+}
+
+static void test_daemon_setup_event_loop_epoll_create1_fails(void)
+{
+	struct event_loop_syscalls sc = daemon_default_syscalls;
+	sc.epoll_create1 = fail_epoll_create1;
+	run_event_loop_setup_fault(&sc, ENOMEM, "epoll_create1");
+}
+
+static void test_daemon_setup_event_loop_epoll_ctl_fails(void)
+{
+	struct event_loop_syscalls sc = daemon_default_syscalls;
+	sc.epoll_ctl = fail_epoll_ctl;
+	run_event_loop_setup_fault(&sc, ENOSPC, "epoll_ctl");
+}
+
 int main(void)
 {
 	test_json_escape();
@@ -672,6 +838,11 @@ int main(void)
 	test_parse_argv_rejects_invalid_u32();
 	test_parse_argv_accepts_valid_u32();
 	test_output_subscriber_closed_no_sigpipe();
+	test_daemon_setup_event_loop_signalfd_fails();
+	test_daemon_setup_event_loop_timerfd_create_fails();
+	test_daemon_setup_event_loop_timerfd_settime_fails();
+	test_daemon_setup_event_loop_epoll_create1_fails();
+	test_daemon_setup_event_loop_epoll_ctl_fails();
 	if (failures) {
 		fprintf(stderr, "%d test failure(s)\n", failures);
 		return 1;
