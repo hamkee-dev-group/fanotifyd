@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 static int failures;
@@ -655,6 +656,60 @@ static void test_output_subscriber_closed_no_sigpipe(void)
 	out_free(&out);
 }
 
+static void test_output_accept_caps_subscribers(void)
+{
+	char path[] = "/tmp/fanotifyd-out-XXXXXX";
+	int tfd = mkstemp(path);
+	if (tfd < 0) { CHECK(0); return; }
+	close(tfd);
+	unlink(path);
+
+	struct out_sink out;
+	out_init(&out);
+	CHECK(out_open_socket(&out, path) == 0);
+
+	enum { N_EXTRA = 5 };
+	const int total_clients = OUT_MAX_SUBSCRIBERS + N_EXTRA;
+	int clients[OUT_MAX_SUBSCRIBERS + N_EXTRA];
+
+	struct sockaddr_un addr;
+	memset(&addr, 0, sizeof addr);
+	addr.sun_family = AF_UNIX;
+	strncpy(addr.sun_path, path, sizeof addr.sun_path - 1);
+
+	for (int i = 0; i < total_clients; i++) {
+		clients[i] = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK, 0);
+		CHECK(clients[i] >= 0);
+		int rc = connect(clients[i], (struct sockaddr *)&addr, sizeof addr);
+		CHECK(rc == 0 || errno == EINPROGRESS);
+
+		if ((i + 1) % 8 == 0)
+			CHECK(out_accept(&out) == 0);
+	}
+	CHECK(out_accept(&out) == 0);
+
+	CHECK(out.sub_len == OUT_MAX_SUBSCRIBERS);
+
+	const char line[] = "ping";
+	CHECK(out_emit_line(&out, line, sizeof line - 1) == 0);
+	CHECK(out.sub_len == OUT_MAX_SUBSCRIBERS);
+
+	for (int i = 0; i < OUT_MAX_SUBSCRIBERS; i++) {
+		char rbuf[16];
+		ssize_t r = recv(clients[i], rbuf, sizeof rbuf, MSG_DONTWAIT);
+		CHECK(r > 0);
+	}
+	for (int i = OUT_MAX_SUBSCRIBERS; i < total_clients; i++) {
+		char rbuf[16];
+		ssize_t r = recv(clients[i], rbuf, sizeof rbuf, MSG_DONTWAIT);
+		CHECK(r == 0);
+	}
+
+	for (int i = 0; i < total_clients; i++)
+		close(clients[i]);
+	out_free(&out);
+}
+
 static int count_open_fds(void)
 {
 	DIR *d = opendir("/proc/self/fd");
@@ -838,6 +893,7 @@ int main(void)
 	test_parse_argv_rejects_invalid_u32();
 	test_parse_argv_accepts_valid_u32();
 	test_output_subscriber_closed_no_sigpipe();
+	test_output_accept_caps_subscribers();
 	test_daemon_setup_event_loop_signalfd_fails();
 	test_daemon_setup_event_loop_timerfd_create_fails();
 	test_daemon_setup_event_loop_timerfd_settime_fails();

@@ -9,6 +9,8 @@
 
 #define FAN_EVENT_SCHEMA_VERSION 1
 
+#define OUT_MAX_SUBSCRIBERS 64
+
 
 
 

@@ -143,6 +143,12 @@ int out_accept(struct out_sink *o)
 				continue;
 			return -1;
 		}
+		if (o->sub_len >= OUT_MAX_SUBSCRIBERS) {
+			close(fd);
+			log_warn("refusing subscriber: cap %d reached",
+			         OUT_MAX_SUBSCRIBERS);
+			continue;
+		}
 		if (sub_push(o, fd) < 0) {
 			close(fd);
 			return -1;
