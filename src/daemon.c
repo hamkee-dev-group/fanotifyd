@@ -36,7 +36,7 @@ static void on_event(const struct fan_event *ev, void *user)
 	if (ev->from_overflow) {
 		c->stats_overflow++;
 		out_emit_alert_line(c->out, realtime_ms(), "overflow",
-		                    0, NULL, NULL, NULL,
+		                    0, NULL, NULL, ev->path,
 		                    "fanotify queue overflowed", NULL);
 		return;
 	}

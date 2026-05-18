@@ -344,6 +344,33 @@ static void test_output_event_json(void)
 	out_free(&out);
 }
 
+static void test_output_alert_overflow_with_path(void)
+{
+	struct out_sink out;
+	out_init(&out);
+	CHECK(out_emit_alert_line(&out, 42, "overflow", 0, NULL, NULL,
+	                          "<overflow>", "fanotify queue overflowed",
+	                          NULL) == 0);
+	CHECK_CONTAINS(out.scratch.data, "\"type\":\"alert\"");
+	CHECK_CONTAINS(out.scratch.data, "\"kind\":\"overflow\"");
+	CHECK_CONTAINS(out.scratch.data, "\"pid\":0");
+	CHECK_CONTAINS(out.scratch.data, "\"path\":\"<overflow>\"");
+	CHECK_CONTAINS(out.scratch.data, "\"reason\":\"fanotify queue overflowed\"");
+	out_free(&out);
+}
+
+static void test_output_alert_overflow_no_optional_fields(void)
+{
+	struct out_sink o;
+	out_init(&o);
+	CHECK(out_emit_alert_line(&o, 99, "overflow", 0, NULL, NULL, NULL,
+	                          "fanotify queue overflowed", NULL) == 0);
+	CHECK_STREQ(o.scratch.data,
+	            "{\"type\":\"alert\",\"ts_ms\":99,\"kind\":\"overflow\","
+	            "\"pid\":0,\"reason\":\"fanotify queue overflowed\"}");
+	out_free(&o);
+}
+
 static void test_fan_compute_mark_mask(void)
 {
 	struct mark_spec mark = {
@@ -884,6 +911,8 @@ int main(void)
 	test_config_load_file_rejects_missing_value();
 	test_job_classify_path();
 	test_output_event_json();
+	test_output_alert_overflow_with_path();
+	test_output_alert_overflow_no_optional_fields();
 	test_fan_compute_mark_mask();
 	test_policy_canary_alerts();
 	test_policy_burst_behavior();

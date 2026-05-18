@@ -219,6 +219,11 @@ reason
 
 For burst alerts, the record also includes `count` and `window_ms`.
 
+The `kind` field identifies the alert category (e.g. `canary`, `burst`,
+`overflow`). For `overflow` alerts emitted when the fanotify queue
+overflows, `pid` is `0`, `path` is `<overflow>`, `reason` is
+`fanotify queue overflowed`, and `comm`/`exe` are omitted.
+
 ## Tests
 
 Unit tests do not need root:
