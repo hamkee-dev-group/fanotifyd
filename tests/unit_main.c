@@ -393,6 +393,25 @@ static void test_fan_compute_mark_mask(void)
 	CHECK(mask == (FAN_OPEN | FAN_DELETE));
 }
 
+static void test_fan_mask_str(void)
+{
+	char buf[64];
+
+	CHECK(fan_mask_str(FAN_CREATE | FAN_ONDIR, buf, sizeof buf) == 12);
+	CHECK_STREQ(buf, "CREATE,ONDIR");
+
+	CHECK(fan_mask_str(FAN_OPEN_PERM | FAN_ACCESS_PERM, buf, sizeof buf) == 21);
+	CHECK_STREQ(buf, "OPEN_PERM,ACCESS_PERM");
+
+	CHECK(fan_mask_str(1ULL << 63, buf, sizeof buf) == 18);
+	CHECK_STREQ(buf, "0x8000000000000000");
+
+	char small[6];
+	memset(small, 'x', sizeof small);
+	CHECK(fan_mask_str(FAN_OPEN | FAN_ACCESS_PERM, small, sizeof small) == 16);
+	CHECK_STREQ(small, "OPEN");
+}
+
 static void test_policy_canary_alerts(void)
 {
 	struct out_sink out;
@@ -914,6 +933,7 @@ int main(void)
 	test_output_alert_overflow_with_path();
 	test_output_alert_overflow_no_optional_fields();
 	test_fan_compute_mark_mask();
+	test_fan_mask_str();
 	test_policy_canary_alerts();
 	test_policy_burst_behavior();
 	test_policy_burst_window_reset_and_gc();

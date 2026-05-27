@@ -157,26 +157,51 @@ static const struct mask_name MASK_NAMES[] = {
 
 size_t fan_mask_str(uint64_t mask, char *out, size_t cap)
 {
-	size_t n = 0;
+	size_t total = 0;
+	size_t pos = 0;
+	uint64_t known = 0;
 	int first = 1;
+	int stopped = (cap == 0);
+
 	for (size_t i = 0; i < sizeof MASK_NAMES / sizeof MASK_NAMES[0]; i++) {
 		if (!(mask & MASK_NAMES[i].bit))
 			continue;
+		known |= MASK_NAMES[i].bit;
 		const char *nm = MASK_NAMES[i].name;
 		size_t l = strlen(nm);
-		if (n + (first ? 0 : 1) + l + 1 >= cap)
-			break;
-		if (!first)
-			out[n++] = ',';
-		memcpy(out + n, nm, l);
-		n += l;
+		size_t need = (first ? 0 : 1) + l;
+		total += need;
+		if (!stopped) {
+			if (pos + need + 1 <= cap) {
+				if (!first)
+					out[pos++] = ',';
+				memcpy(out + pos, nm, l);
+				pos += l;
+			} else {
+				stopped = 1;
+			}
+		}
 		first = 0;
 	}
-	if (n < cap)
-		out[n] = '\0';
-	else if (cap > 0)
-		out[cap - 1] = '\0';
-	return n;
+
+	uint64_t unknown = mask & ~known;
+	if (unknown) {
+		char hex[32];
+		int h = snprintf(hex, sizeof hex, "0x%" PRIx64, unknown);
+		size_t need = (first ? 0 : 1) + (size_t)h;
+		total += need;
+		if (!stopped && pos + need + 1 <= cap) {
+			if (!first)
+				out[pos++] = ',';
+			memcpy(out + pos, hex, (size_t)h);
+			pos += (size_t)h;
+		}
+	}
+
+	if (cap > 0)
+		out[pos] = '\0';
+
+	return total;
 }
 
 static int try_resolve_via_fid(struct mount_db *db,
