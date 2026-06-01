@@ -253,8 +253,7 @@ int out_emit_event_line(struct out_sink *o,
 		buf_appendz(b, ",\"name\":");
 		buf_append_json_string(b, name);
 	}
-	if (is_dir)
-		buf_appendz(b, ",\"is_dir\":true");
+	buf_appendz(b, is_dir ? ",\"is_dir\":true" : ",\"is_dir\":false");
 	if (buf_appendc(b, '}') < 0)
 		return -1;
 	return out_emit_line(o, b->data, b->len);

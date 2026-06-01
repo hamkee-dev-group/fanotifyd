@@ -340,7 +340,7 @@ static void test_output_event_json(void)
 	            "{\"schema_version\":1,\"type\":\"event\",\"ts_ms\":18,"
 	            "\"mask\":10,\"events\":\"ACCESS\",\"decision\":\"allow\","
 	            "\"job_id\":null,\"path_role\":null,\"pid\":322,"
-	            "\"path\":\"/tmp/none\"}");
+	            "\"path\":\"/tmp/none\",\"is_dir\":false}");
 	out_free(&out);
 }
 
