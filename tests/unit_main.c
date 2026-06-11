@@ -412,6 +412,72 @@ static void test_fan_mask_str(void)
 	CHECK_STREQ(small, "OPEN");
 }
 
+static void test_fan_mask_str_contract(void)
+{
+	{
+		char buf[64];
+		memset(buf, 'x', sizeof buf);
+		CHECK(fan_mask_str(0, buf, sizeof buf) == 0);
+		CHECK_STREQ(buf, "");
+	}
+
+	{
+		char buf[256];
+		memset(buf, 'x', sizeof buf);
+		size_t ret = fan_mask_str(FAN_OPEN | FAN_MODIFY, buf, sizeof buf);
+		CHECK(ret == strlen(buf));
+		CHECK_CONTAINS(buf, "OPEN");
+		CHECK_CONTAINS(buf, "MODIFY");
+		size_t len = strlen(buf);
+		CHECK(len > 0 && buf[len - 1] != ',');
+		CHECK(buf[0] != ',');
+		CHECK(strstr(buf, ",,") == NULL);
+	}
+
+	{
+		char buf[256];
+		memset(buf, 'x', sizeof buf);
+		size_t ret = fan_mask_str((1ULL << 60) | FAN_OPEN, buf, sizeof buf);
+		CHECK(ret == strlen(buf));
+		CHECK_CONTAINS(buf, "OPEN");
+		CHECK_CONTAINS(buf, "0x1000000000000000");
+	}
+
+	{
+		char buf[8];
+		memset(buf, 'x', sizeof buf);
+		size_t ret = fan_mask_str(FAN_OPEN | FAN_MODIFY | FAN_ATTRIB,
+		                          buf, sizeof buf);
+		size_t len = strnlen(buf, sizeof buf);
+		CHECK(len < sizeof buf);
+
+		static const char *const known[] = {
+			"ACCESS", "MODIFY", "ATTRIB",
+			"CLOSE_WRITE", "CLOSE_NOWRITE",
+			"OPEN", "MOVED_FROM", "MOVED_TO",
+			"CREATE", "DELETE", "DELETE_SELF", "MOVE_SELF",
+			"OPEN_EXEC", "Q_OVERFLOW", "FS_ERROR",
+			"OPEN_PERM", "ACCESS_PERM", "OPEN_EXEC_PERM",
+			"RENAME", "ONDIR",
+		};
+		char copy[sizeof buf];
+		memcpy(copy, buf, sizeof copy);
+		char *save = NULL;
+		for (char *tok = strtok_r(copy, ",", &save); tok;
+		     tok = strtok_r(NULL, ",", &save)) {
+			int ok = 0;
+			for (size_t i = 0; i < sizeof known / sizeof known[0]; i++) {
+				if (strcmp(tok, known[i]) == 0) {
+					ok = 1;
+					break;
+				}
+			}
+			CHECK(ok);
+		}
+		CHECK(ret >= len);
+	}
+}
+
 static void test_policy_canary_alerts(void)
 {
 	struct out_sink out;
@@ -934,6 +1000,7 @@ int main(void)
 	test_output_alert_overflow_no_optional_fields();
 	test_fan_compute_mark_mask();
 	test_fan_mask_str();
+	test_fan_mask_str_contract();
 	test_policy_canary_alerts();
 	test_policy_burst_behavior();
 	test_policy_burst_window_reset_and_gc();
