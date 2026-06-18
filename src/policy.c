@@ -1,4 +1,5 @@
 #include "policy.h"
+#include "fan.h"
 #include "log.h"
 #include "util.h"
 
@@ -201,12 +202,14 @@ uint32_t policy_on_event(struct policy_state *p, const struct policy_input *in)
 		alert = 1;
 	}
 
+	int can_deny = fan_is_perm_event(in->mask) && p->cfg.deny_on_alert;
+
 	if (p->cfg.burst_threshold == 0 || !mutating)
-		return alert && p->cfg.deny_on_alert ? FAN_DENY : FAN_ALLOW;
+		return alert && can_deny ? FAN_DENY : FAN_ALLOW;
 
 	struct pid_window *w = win_get(p, in->pid);
 	if (!w)
-		return alert && p->cfg.deny_on_alert ? FAN_DENY : FAN_ALLOW;
+		return alert && can_deny ? FAN_DENY : FAN_ALLOW;
 	uint64_t now = in->ts_ms;
 	if (w->count == 0 || now - w->first_ms > p->cfg.burst_window_ms) {
 		w->first_ms = now;
@@ -238,7 +241,7 @@ uint32_t policy_on_event(struct policy_state *p, const struct policy_input *in)
 			w->first_ms = now;
 		}
 	}
-	return alert && p->cfg.deny_on_alert ? FAN_DENY : FAN_ALLOW;
+	return alert && can_deny ? FAN_DENY : FAN_ALLOW;
 }
 
 void policy_tick(struct policy_state *p, uint64_t now_ms)

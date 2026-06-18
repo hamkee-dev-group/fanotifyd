@@ -596,6 +596,70 @@ static void test_policy_burst_behavior(void)
 	CHECK(unlink(path) == 0);
 }
 
+static void test_policy_deny_only_on_perm_events(void)
+{
+	struct out_sink out;
+	char path[] = "/tmp/fanotifyd-capture-XXXXXX";
+	char canary_pattern[] = "/tmp/canary*";
+	char *canaries[] = { canary_pattern };
+	struct policy_cfg cfg = {
+		.canaries = canaries,
+		.n_canaries = 1,
+		.burst_threshold = 2,
+		.burst_window_ms = 100,
+		.hook_cooldown_ms = 500,
+		.deny_on_alert = 1,
+	};
+
+	if (init_capture_sink(&out, path, sizeof path) < 0) {
+		CHECK(0);
+		return;
+	}
+
+	struct policy_state *policy = policy_new(&cfg, &out);
+	CHECK(policy != NULL);
+	if (!policy) {
+		out_free(&out);
+		unlink(path);
+		return;
+	}
+
+	struct policy_input in = {
+		.ts_ms = 100,
+		.pid = 42,
+		.path = "/tmp/canary",
+	};
+
+	in.mask = FAN_OPEN;
+	CHECK(policy_on_event(policy, &in) == FAN_ALLOW);
+	in.mask = FAN_OPEN_PERM;
+	CHECK(policy_on_event(policy, &in) == FAN_DENY);
+
+	struct policy_input burst_in = {
+		.pid = 7,
+		.path = "/tmp/data",
+	};
+	burst_in.ts_ms = 1000;
+	burst_in.mask = FAN_MODIFY;
+	CHECK(policy_on_event(policy, &burst_in) == FAN_ALLOW);
+	burst_in.ts_ms = 1050;
+	CHECK(policy_on_event(policy, &burst_in) == FAN_ALLOW);
+
+	char *captured = slurp_fd(out.file_fd);
+	CHECK(captured != NULL);
+	if (captured) {
+		CHECK(count_substr(captured, "\"kind\":\"canary\"") == 2);
+		CHECK(count_substr(captured, "\"reason\":\"canary opened\"") == 2);
+		CHECK(count_substr(captured, "\"kind\":\"burst\"") == 1);
+		CHECK_CONTAINS(captured, "\"count\":2,\"window_ms\":100");
+	}
+	free(captured);
+
+	policy_free(policy);
+	out_free(&out);
+	CHECK(unlink(path) == 0);
+}
+
 static void test_policy_burst_window_reset_and_gc(void)
 {
 	struct out_sink out;
@@ -1003,6 +1067,7 @@ int main(void)
 	test_fan_mask_str_contract();
 	test_policy_canary_alerts();
 	test_policy_burst_behavior();
+	test_policy_deny_only_on_perm_events();
 	test_policy_burst_window_reset_and_gc();
 	test_config_load_file_rejects_invalid_u32();
 	test_config_load_file_accepts_valid_u32();
