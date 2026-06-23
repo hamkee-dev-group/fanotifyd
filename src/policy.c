@@ -194,12 +194,20 @@ uint32_t policy_on_event(struct policy_state *p, const struct policy_input *in)
 
 	if ((in->mask & CANARY_MASK) && canary_match(p, in->path) &&
 	    (reason = canary_reason(in->mask)) != NULL) {
-		out_emit_alert_line(p->out, realtime_ms(), "canary",
-		                    in->pid, in->comm, in->exe, in->path,
-		                    reason, NULL);
-		run_hook(p->cfg.hook_cmd, "canary", in->pid, in->comm, in->exe,
-		         in->path, reason);
-		alert = 1;
+		struct pid_window *w = win_get(p, in->pid);
+		if (w) {
+			if (w->last_alert_ms == 0 ||
+			    in->ts_ms - w->last_alert_ms >= p->cfg.hook_cooldown_ms) {
+				out_emit_alert_line(p->out, realtime_ms(), "canary",
+				                    in->pid, in->comm, in->exe, in->path,
+				                    reason, NULL);
+				run_hook(p->cfg.hook_cmd, "canary", in->pid, in->comm, in->exe,
+				         in->path, reason);
+				w->last_alert_ms = in->ts_ms;
+				alert = 1;
+			}
+			w->last_ms = in->ts_ms;
+		}
 	}
 
 	int can_deny = fan_is_perm_event(in->mask) && p->cfg.deny_on_alert;

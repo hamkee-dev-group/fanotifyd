@@ -18,6 +18,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 static int failures;
@@ -487,6 +488,7 @@ static void test_policy_canary_alerts(void)
 	struct policy_cfg cfg = {
 		.canaries = canaries,
 		.n_canaries = 1,
+		.hook_cooldown_ms = 1,
 	};
 
 	if (init_capture_sink(&out, path, sizeof path) < 0) {
@@ -510,14 +512,19 @@ static void test_policy_canary_alerts(void)
 
 	in.mask = FAN_ACCESS;
 	CHECK(policy_on_event(policy, &in) == FAN_ALLOW);
+	in.ts_ms = 101;
 	in.mask = FAN_OPEN;
 	CHECK(policy_on_event(policy, &in) == FAN_ALLOW);
+	in.ts_ms = 102;
 	in.mask = FAN_MODIFY;
 	CHECK(policy_on_event(policy, &in) == FAN_ALLOW);
+	in.ts_ms = 103;
 	in.mask = FAN_MOVED_FROM;
 	CHECK(policy_on_event(policy, &in) == FAN_ALLOW);
+	in.ts_ms = 104;
 	in.mask = FAN_DELETE;
 	CHECK(policy_on_event(policy, &in) == FAN_ALLOW);
+	in.ts_ms = 105;
 	in.path = "/tmp/not-canary";
 	in.mask = FAN_OPEN;
 	CHECK(policy_on_event(policy, &in) == FAN_ALLOW);
@@ -632,6 +639,7 @@ static void test_policy_deny_only_on_perm_events(void)
 
 	in.mask = FAN_OPEN;
 	CHECK(policy_on_event(policy, &in) == FAN_ALLOW);
+	in.ts_ms = 700;
 	in.mask = FAN_OPEN_PERM;
 	CHECK(policy_on_event(policy, &in) == FAN_DENY);
 
@@ -706,6 +714,136 @@ static void test_policy_burst_window_reset_and_gc(void)
 	policy_free(policy);
 	out_free(&out);
 	CHECK(unlink(path) == 0);
+}
+
+static void test_policy_canary_hook_cooldown(void)
+{
+	struct out_sink out;
+	char path[] = "/tmp/fanotifyd-capture-XXXXXX";
+	char canary_pattern[] = "/tmp/canary";
+	char *canaries[] = { canary_pattern };
+	struct policy_cfg cfg = {
+		.canaries = canaries,
+		.n_canaries = 1,
+		.hook_cooldown_ms = 10000,
+	};
+
+	if (init_capture_sink(&out, path, sizeof path) < 0) {
+		CHECK(0);
+		return;
+	}
+
+	struct policy_state *policy = policy_new(&cfg, &out);
+	CHECK(policy != NULL);
+	if (!policy) {
+		out_free(&out);
+		unlink(path);
+		return;
+	}
+
+	struct policy_input in = {
+		.pid = 42,
+		.mask = FAN_OPEN,
+		.path = "/tmp/canary",
+	};
+	in.ts_ms = 100;
+	CHECK(policy_on_event(policy, &in) == FAN_ALLOW);
+	in.ts_ms = 110;
+	CHECK(policy_on_event(policy, &in) == FAN_ALLOW);
+
+	char *captured = slurp_fd(out.file_fd);
+	CHECK(captured != NULL);
+	if (captured)
+		CHECK(count_substr(captured, "\"kind\":\"canary\"") == 1);
+	free(captured);
+
+	policy_free(policy);
+	out_free(&out);
+	CHECK(unlink(path) == 0);
+}
+
+static void test_policy_canary_hook_cooldown_runs_hook(void)
+{
+	struct out_sink out;
+	char path[] = "/tmp/fanotifyd-capture-XXXXXX";
+	char hook_out[] = "/tmp/fanotifyd-hook-XXXXXX";
+	int hfd = mkstemp(hook_out);
+	CHECK(hfd >= 0);
+	if (hfd < 0)
+		return;
+	close(hfd);
+
+	char canary_pattern[] = "/tmp/canary";
+	char *canaries[] = { canary_pattern };
+	char hook_cmd[256];
+	snprintf(hook_cmd, sizeof hook_cmd,
+	         "printf '%%s:%%s:%%s:%%s\\n' \"$FAN_KIND\" \"$FAN_PID\" "
+	         "\"$FAN_REASON\" \"$FAN_PATH\" >> %s",
+	         hook_out);
+
+	struct policy_cfg cfg = {
+		.canaries = canaries,
+		.n_canaries = 1,
+		.hook_cmd = hook_cmd,
+		.hook_cooldown_ms = 500,
+	};
+
+	if (init_capture_sink(&out, path, sizeof path) < 0) {
+		CHECK(0);
+		unlink(hook_out);
+		return;
+	}
+
+	struct policy_state *policy = policy_new(&cfg, &out);
+	CHECK(policy != NULL);
+	if (!policy) {
+		out_free(&out);
+		unlink(path);
+		unlink(hook_out);
+		return;
+	}
+
+	struct policy_input in = {
+		.pid = 42,
+		.mask = FAN_OPEN,
+		.path = "/tmp/canary",
+	};
+	in.ts_ms = 1000;
+	CHECK(policy_on_event(policy, &in) == FAN_ALLOW);
+	in.ts_ms = 1100;
+	CHECK(policy_on_event(policy, &in) == FAN_ALLOW);
+	in.ts_ms = 1600;
+	CHECK(policy_on_event(policy, &in) == FAN_ALLOW);
+
+	int status;
+	while (waitpid(-1, &status, 0) > 0)
+		;
+
+	char *captured = slurp_fd(out.file_fd);
+	CHECK(captured != NULL);
+	if (captured) {
+		CHECK(count_substr(captured, "\"kind\":\"canary\"") == 2);
+		CHECK(count_substr(captured, "\"reason\":\"canary opened\"") == 2);
+		CHECK(count_substr(captured, "\"path\":\"/tmp/canary\"") == 2);
+	}
+	free(captured);
+
+	int rfd = open(hook_out, O_RDONLY);
+	CHECK(rfd >= 0);
+	if (rfd >= 0) {
+		char *hook_content = slurp_fd(rfd);
+		close(rfd);
+		CHECK(hook_content != NULL);
+		if (hook_content)
+			CHECK(count_substr(hook_content,
+			                   "canary:42:canary opened:/tmp/canary") == 2);
+		free(hook_content);
+	}
+
+	policy_free(policy);
+	out_free(&out);
+	CHECK(unlink(path) == 0);
+	CHECK(unlink(hook_out) == 0);
 }
 
 static void test_config_load_file_rejects_invalid_u32(void)
@@ -1069,6 +1207,8 @@ int main(void)
 	test_policy_burst_behavior();
 	test_policy_deny_only_on_perm_events();
 	test_policy_burst_window_reset_and_gc();
+	test_policy_canary_hook_cooldown();
+	test_policy_canary_hook_cooldown_runs_hook();
 	test_config_load_file_rejects_invalid_u32();
 	test_config_load_file_accepts_valid_u32();
 	test_parse_argv_rejects_invalid_u32();
