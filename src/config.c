@@ -154,6 +154,21 @@ static int parse_u32_strict(const char *s, uint32_t *out)
 	return 0;
 }
 
+static int parse_bool_strict(const char *s, int *out)
+{
+	if (!s)
+		return -1;
+	if (strcmp(s, "1") == 0) {
+		*out = 1;
+		return 0;
+	}
+	if (strcmp(s, "0") == 0) {
+		*out = 0;
+		return 0;
+	}
+	return -1;
+}
+
 static char *trim(char *s)
 {
 	while (*s && isspace((unsigned char)*s))
@@ -300,13 +315,33 @@ int daemon_cfg_load_file(struct daemon_cfg *c, const char *path)
 				break;
 			}
 		} else if (strcmp(key, "foreground") == 0) {
-			c->foreground = atoi(val) ? 1 : 0;
+			if (parse_bool_strict(val, &c->foreground) < 0) {
+				fprintf(stderr, "config:%d: invalid %s value '%s'\n",
+				        lineno, key, val);
+				rc = -1;
+				break;
+			}
 		} else if (strcmp(key, "perm") == 0) {
-			c->want_perm = atoi(val) ? 1 : 0;
+			if (parse_bool_strict(val, &c->want_perm) < 0) {
+				fprintf(stderr, "config:%d: invalid %s value '%s'\n",
+				        lineno, key, val);
+				rc = -1;
+				break;
+			}
 		} else if (strcmp(key, "deny_on_alert") == 0) {
-			c->deny_on_alert = atoi(val) ? 1 : 0;
+			if (parse_bool_strict(val, &c->deny_on_alert) < 0) {
+				fprintf(stderr, "config:%d: invalid %s value '%s'\n",
+				        lineno, key, val);
+				rc = -1;
+				break;
+			}
 		} else if (strcmp(key, "fid") == 0) {
-			c->want_fid = atoi(val) ? 1 : 0;
+			if (parse_bool_strict(val, &c->want_fid) < 0) {
+				fprintf(stderr, "config:%d: invalid %s value '%s'\n",
+				        lineno, key, val);
+				rc = -1;
+				break;
+			}
 		} else {
 			fprintf(stderr, "config:%d: unknown key '%s'\n", lineno, key);
 			rc = -1;
@@ -350,7 +385,8 @@ void daemon_cfg_print_usage(const char *prog)
 "canary, output, socket, hook, pid_file, burst_threshold, burst_window_ms,\n"
 "hook_cooldown_ms, foreground, perm, deny_on_alert, fid, job,\n"
 "rootfs, workspace, export, cache, job_rootfs, job_workspace, job_export,\n"
-"job_cache.\n",
+"job_cache.\n"
+"Boolean keys (foreground, perm, deny_on_alert, fid) accept only 0 or 1.\n",
 prog);
 }
 

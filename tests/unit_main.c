@@ -899,6 +899,68 @@ static void test_config_load_file_accepts_valid_u32(void)
 	CHECK(unlink(path) == 0);
 }
 
+static void test_config_load_file_rejects_invalid_bool(void)
+{
+	const char *keys[] = {
+		"foreground",
+		"perm",
+		"deny_on_alert",
+		"fid",
+	};
+	const char *bad_vals[] = { "true", "false", "2", "-1", "1junk" };
+
+	for (size_t k = 0; k < sizeof keys / sizeof keys[0]; k++) {
+		for (size_t v = 0; v < sizeof bad_vals / sizeof bad_vals[0]; v++) {
+			char path[] = "/tmp/fanotifyd-config-XXXXXX";
+			char contents[128];
+			snprintf(contents, sizeof contents, "%s %s\n",
+			         keys[k], bad_vals[v]);
+
+			if (write_temp_config(path, sizeof path, contents) < 0) {
+				CHECK(0);
+				continue;
+			}
+
+			struct daemon_cfg cfg;
+			daemon_cfg_init(&cfg);
+			CHECK(daemon_cfg_load_file(&cfg, path) == -1);
+			daemon_cfg_free(&cfg);
+			CHECK(unlink(path) == 0);
+		}
+	}
+}
+
+static void test_config_load_file_accepts_valid_bool(void)
+{
+	const char *keys[] = {
+		"foreground",
+		"perm",
+		"deny_on_alert",
+		"fid",
+	};
+	const char *good_vals[] = { "0", "1" };
+
+	for (size_t k = 0; k < sizeof keys / sizeof keys[0]; k++) {
+		for (size_t v = 0; v < sizeof good_vals / sizeof good_vals[0]; v++) {
+			char path[] = "/tmp/fanotifyd-config-XXXXXX";
+			char contents[128];
+			snprintf(contents, sizeof contents, "%s %s\n",
+			         keys[k], good_vals[v]);
+
+			if (write_temp_config(path, sizeof path, contents) < 0) {
+				CHECK(0);
+				continue;
+			}
+
+			struct daemon_cfg cfg;
+			daemon_cfg_init(&cfg);
+			CHECK(daemon_cfg_load_file(&cfg, path) == 0);
+			daemon_cfg_free(&cfg);
+			CHECK(unlink(path) == 0);
+		}
+	}
+}
+
 static void test_parse_argv_rejects_invalid_u32(void)
 {
 	const char *flags[] = {
@@ -1211,6 +1273,8 @@ int main(void)
 	test_policy_canary_hook_cooldown_runs_hook();
 	test_config_load_file_rejects_invalid_u32();
 	test_config_load_file_accepts_valid_u32();
+	test_config_load_file_rejects_invalid_bool();
+	test_config_load_file_accepts_valid_bool();
 	test_parse_argv_rejects_invalid_u32();
 	test_parse_argv_accepts_valid_u32();
 	test_output_subscriber_closed_no_sigpipe();
