@@ -40,7 +40,7 @@ $(BIN): $(OBJ)
 	$(CC) $(CSTD) $(CFLAGS) -Isrc -c -o $@ $<
 
 $(UNIT_BIN): $(UNIT_SRC)
-	$(CC) $(CSTD) $(CFLAGS) -Isrc -o $@ $^
+	$(CC) $(CSTD) $(CFLAGS) -DFANOTIFYD_TESTING -Isrc -o $@ $^
 
 $(PIVOT_BIN): tests/pivot_writer.c
 	$(CC) $(CSTD) $(CFLAGS) -o $@ $<

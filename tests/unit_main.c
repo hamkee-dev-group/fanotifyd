@@ -1006,6 +1006,41 @@ static void test_parse_argv_accepts_valid_u32(void)
 	daemon_cfg_free(&cfg);
 }
 
+static void test_parse_argv_propagates_add_failures(void)
+{
+	const char *mark_flags[] = { "-w", "--mount", "--filesystem" };
+
+	for (size_t i = 0; i < sizeof mark_flags / sizeof mark_flags[0]; i++) {
+		optind = 0;
+		char *argv[] = {
+			(char *)"fanotifyd",
+			(char *)mark_flags[i],
+			(char *)"/tmp",
+			NULL,
+		};
+		struct daemon_cfg cfg;
+		daemon_cfg_init(&cfg);
+		daemon_cfg_test_fail_next_mark_add();
+		CHECK(daemon_cfg_parse_argv(&cfg, 3, argv) == -1);
+		CHECK(cfg.n_marks == 0);
+		daemon_cfg_free(&cfg);
+	}
+
+	optind = 0;
+	char *argv[] = {
+		(char *)"fanotifyd",
+		(char *)"--canary",
+		(char *)"/tmp/fanotifyd-canary",
+		NULL,
+	};
+	struct daemon_cfg cfg;
+	daemon_cfg_init(&cfg);
+	daemon_cfg_test_fail_next_canary_add();
+	CHECK(daemon_cfg_parse_argv(&cfg, 3, argv) == -1);
+	CHECK(cfg.n_canaries == 0);
+	daemon_cfg_free(&cfg);
+}
+
 static void test_output_subscriber_closed_no_sigpipe(void)
 {
 	struct sigaction sa = { .sa_handler = SIG_DFL };
@@ -1277,6 +1312,7 @@ int main(void)
 	test_config_load_file_accepts_valid_bool();
 	test_parse_argv_rejects_invalid_u32();
 	test_parse_argv_accepts_valid_u32();
+	test_parse_argv_propagates_add_failures();
 	test_output_subscriber_closed_no_sigpipe();
 	test_output_accept_caps_subscribers();
 	test_daemon_setup_event_loop_signalfd_fails();

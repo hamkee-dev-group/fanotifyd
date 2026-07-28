@@ -54,6 +54,10 @@ int  daemon_cfg_load_file(struct daemon_cfg *c, const char *path);
 int  daemon_cfg_add_mark(struct daemon_cfg *c, const char *path,
                          enum mark_type t, uint64_t mask);
 int  daemon_cfg_add_canary(struct daemon_cfg *c, const char *pat);
+#ifdef FANOTIFYD_TESTING
+void daemon_cfg_test_fail_next_mark_add(void);
+void daemon_cfg_test_fail_next_canary_add(void);
+#endif
 struct job_entry *daemon_cfg_add_job(struct daemon_cfg *c, const char *job_id);
 int  daemon_cfg_set_job_path(struct daemon_cfg *c, const char *job_id,
                              const char *role, const char *path);

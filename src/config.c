@@ -9,6 +9,21 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef FANOTIFYD_TESTING
+static int fail_next_mark_add;
+static int fail_next_canary_add;
+
+void daemon_cfg_test_fail_next_mark_add(void)
+{
+	fail_next_mark_add = 1;
+}
+
+void daemon_cfg_test_fail_next_canary_add(void)
+{
+	fail_next_canary_add = 1;
+}
+#endif
+
 void daemon_cfg_init(struct daemon_cfg *c)
 {
 	memset(c, 0, sizeof *c);
@@ -44,6 +59,12 @@ void daemon_cfg_free(struct daemon_cfg *c)
 int daemon_cfg_add_mark(struct daemon_cfg *c, const char *path,
                         enum mark_type t, uint64_t mask)
 {
+#ifdef FANOTIFYD_TESTING
+	if (fail_next_mark_add) {
+		fail_next_mark_add = 0;
+		return -1;
+	}
+#endif
 	struct mark_spec *p = realloc(c->marks, (c->n_marks + 1) * sizeof *p);
 	if (!p)
 		return -1;
@@ -62,6 +83,12 @@ int daemon_cfg_add_mark(struct daemon_cfg *c, const char *path,
 
 int daemon_cfg_add_canary(struct daemon_cfg *c, const char *pat)
 {
+#ifdef FANOTIFYD_TESTING
+	if (fail_next_canary_add) {
+		fail_next_canary_add = 0;
+		return -1;
+	}
+#endif
 	char **p = realloc(c->canaries, (c->n_canaries + 1) * sizeof *p);
 	if (!p)
 		return -1;
@@ -448,30 +475,42 @@ int daemon_cfg_parse_argv(struct daemon_cfg *c, int argc, char **argv)
 				return -1;
 			}
 			rstrip_slash(p);
-			daemon_cfg_add_mark(c, p, MARK_INODE, 0);
+			int rc = daemon_cfg_add_mark(c, p, MARK_INODE, 0);
 			free(p);
+			if (rc < 0)
+				return -1;
 			break;
 		}
 		case OPT_MOUNT: {
 			char *p = abs_path(optarg);
 			if (!p) return -1;
 			rstrip_slash(p);
-			daemon_cfg_add_mark(c, p, MARK_MOUNT, 0);
+			int rc = daemon_cfg_add_mark(c, p, MARK_MOUNT, 0);
 			free(p);
+			if (rc < 0)
+				return -1;
 			break;
 		}
 		case OPT_FS: {
 			char *p = abs_path(optarg);
 			if (!p) return -1;
 			rstrip_slash(p);
-			daemon_cfg_add_mark(c, p, MARK_FILESYSTEM, 0);
+			int rc = daemon_cfg_add_mark(c, p, MARK_FILESYSTEM, 0);
 			free(p);
+			if (rc < 0)
+				return -1;
 			break;
 		}
 		case OPT_CANARY: {
 			char *p = abs_path(optarg);
-			daemon_cfg_add_canary(c, p ? p : optarg);
+			if (!p) {
+				fprintf(stderr, "%s: bad path '%s'\n", prog, optarg);
+				return -1;
+			}
+			int rc = daemon_cfg_add_canary(c, p);
 			free(p);
+			if (rc < 0)
+				return -1;
 			break;
 		}
 		case 'o':       free(c->out_path);     c->out_path = strdup(optarg); break;
