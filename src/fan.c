@@ -26,7 +26,22 @@
 
 
 
-static uint64_t default_mask(int want_perm)
+int fan_fid_reporting(int want_fid, int want_perm)
+{
+	return want_fid && !want_perm;
+}
+
+uint64_t fan_fid_only_events(void)
+{
+	uint64_t m = FAN_CREATE | FAN_DELETE | FAN_MOVED_FROM | FAN_MOVED_TO |
+	             FAN_ATTRIB | FAN_MOVE_SELF | FAN_DELETE_SELF;
+#ifdef FAN_RENAME
+	m |= FAN_RENAME;
+#endif
+	return m;
+}
+
+static uint64_t default_mask(int want_fid, int want_perm)
 {
 	if (want_perm) {
 		uint64_t m = FAN_OPEN | FAN_OPEN_PERM | FAN_ACCESS_PERM |
@@ -34,18 +49,17 @@ static uint64_t default_mask(int want_perm)
 		return m;
 	}
 
-	uint64_t m = FAN_CREATE | FAN_DELETE | FAN_MOVED_FROM | FAN_MOVED_TO |
-	             FAN_MODIFY | FAN_CLOSE_WRITE | FAN_OPEN | FAN_ATTRIB |
+	uint64_t m = FAN_MODIFY | FAN_CLOSE_WRITE | FAN_OPEN |
 	             FAN_ONDIR | FAN_EVENT_ON_CHILD;
-#ifdef FAN_RENAME
-	m |= FAN_RENAME;
-#endif
+	if (fan_fid_reporting(want_fid, want_perm))
+		m |= fan_fid_only_events();
 	return m;
 }
 
-uint64_t fan_compute_mark_mask(const struct mark_spec *m, int want_perm)
+uint64_t fan_compute_mark_mask(const struct mark_spec *m, int want_fid,
+                               int want_perm)
 {
-	uint64_t mask = (m && m->mask) ? m->mask : default_mask(want_perm);
+	uint64_t mask = (m && m->mask) ? m->mask : default_mask(want_fid, want_perm);
 	if (m && m->children)
 		mask |= FAN_EVENT_ON_CHILD;
 	return mask;
@@ -54,7 +68,7 @@ uint64_t fan_compute_mark_mask(const struct mark_spec *m, int want_perm)
 int fan_init(int *out_fd, int want_fid, int want_perm)
 {
 	unsigned int flags = FAN_CLOEXEC | FAN_NONBLOCK;
-	if (want_fid && !want_perm) {
+	if (fan_fid_reporting(want_fid, want_perm)) {
 #ifdef FAN_REPORT_DFID_NAME
 		flags |= FAN_REPORT_DFID_NAME | FAN_REPORT_FID;
 #else
@@ -85,10 +99,17 @@ int fan_mark(int fanfd, struct mount_db *db, const struct mark_spec *m,
 	case MARK_FILESYSTEM:  mflags |= FAN_MARK_FILESYSTEM; break;
 	}
 
-	uint64_t mask = fan_compute_mark_mask(m, want_perm);
+	uint64_t mask = fan_compute_mark_mask(m, want_fid, want_perm);
 
-	if (fanotify_mark(fanfd, mflags, mask, AT_FDCWD, m->path) < 0)
+	if (fanotify_mark(fanfd, mflags, mask, AT_FDCWD, m->path) < 0) {
+		if (errno == EINVAL && !fan_fid_reporting(want_fid, want_perm) &&
+		    (mask & fan_fid_only_events()) != 0)
+			log_err("mark %s requests create/delete/move/attrib "
+			        "events, which the kernel only reports with "
+			        "file handles; drop them or stop disabling fid",
+			        m->path);
 		return -1;
+	}
 
 	if (want_fid && !want_perm && mount_db_add_for_path(db, m->path) < 0) {
 		log_warn("mount_db_add_for_path(%s) failed: %s",

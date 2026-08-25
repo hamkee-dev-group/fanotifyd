@@ -25,7 +25,10 @@ struct mark_spec {
 
  
 int fan_init(int *out_fd, int want_fid, int want_perm);
-uint64_t fan_compute_mark_mask(const struct mark_spec *m, int want_perm);
+uint64_t fan_compute_mark_mask(const struct mark_spec *m, int want_fid,
+                               int want_perm);
+int fan_fid_reporting(int want_fid, int want_perm);
+uint64_t fan_fid_only_events(void);
 int fan_clear_marks(int fanfd);
 
 

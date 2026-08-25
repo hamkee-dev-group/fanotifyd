@@ -236,9 +236,12 @@ int daemon_run(struct daemon_cfg *cfg)
 	}
 
 	int fanfd = -1;
-	int use_fid = cfg->want_fid && !cfg->want_perm;
+	int use_fid = fan_fid_reporting(cfg->want_fid, cfg->want_perm);
 	if (cfg->want_perm && cfg->want_fid)
 		log_warn("permission events require FD mode; disabling FID reporting");
+	if (!use_fid)
+		log_info("FD mode: create, delete, move and attrib events are "
+		         "unavailable without file handle reporting");
 	if (fan_init(&fanfd, use_fid, cfg->want_perm) < 0) {
 		log_err("fanotify_init failed: %s", strerror(errno));
 		log_err("(fanotifyd typically requires CAP_SYS_ADMIN; "

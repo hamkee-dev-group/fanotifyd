@@ -381,17 +381,34 @@ static void test_fan_compute_mark_mask(void)
 		.children = 0,
 	};
 
-	uint64_t mask = fan_compute_mark_mask(&mark, 0);
+	uint64_t mask = fan_compute_mark_mask(&mark, 1, 0);
 	CHECK((mask & FAN_OPEN_PERM) == 0);
 	CHECK((mask & FAN_ACCESS_PERM) == 0);
 
-	mask = fan_compute_mark_mask(&mark, 1);
+	mask = fan_compute_mark_mask(&mark, 1, 1);
 	CHECK((mask & FAN_OPEN_PERM) != 0);
 	CHECK((mask & FAN_ACCESS_PERM) != 0);
 
 	mark.mask = FAN_OPEN | FAN_DELETE;
-	mask = fan_compute_mark_mask(&mark, 1);
+	mask = fan_compute_mark_mask(&mark, 1, 1);
 	CHECK(mask == (FAN_OPEN | FAN_DELETE));
+
+	mark.mask = 0;
+	mask = fan_compute_mark_mask(&mark, 1, 0);
+	CHECK((mask & fan_fid_only_events()) == fan_fid_only_events());
+
+	mask = fan_compute_mark_mask(&mark, 0, 0);
+	CHECK((mask & fan_fid_only_events()) == 0);
+	CHECK((mask & FAN_OPEN) != 0);
+	CHECK((mask & FAN_MODIFY) != 0);
+	CHECK((mask & FAN_CLOSE_WRITE) != 0);
+
+	mask = fan_compute_mark_mask(&mark, 1, 1);
+	CHECK((mask & fan_fid_only_events()) == 0);
+
+	CHECK(fan_fid_reporting(1, 0) != 0);
+	CHECK(fan_fid_reporting(0, 0) == 0);
+	CHECK(fan_fid_reporting(1, 1) == 0);
 }
 
 static void test_fan_mask_str(void)

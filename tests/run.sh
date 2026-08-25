@@ -167,7 +167,7 @@ run_pivot_mount_smoke() {
 	trap 'stop_daemon "${daemon_pid:-0}"; umount "$rootdir" 2>/dev/null || true; rm -rf "$tmpdir"' EXIT INT TERM HUP
 
 	./fanotifyd --foreground \
-		--mount "$rootdir" \
+		--filesystem "$rootdir" \
 		--no-fid \
 		--output "$outfile" \
 		>"$tmpdir/pivot.stdout" 2>"$logfile" &
