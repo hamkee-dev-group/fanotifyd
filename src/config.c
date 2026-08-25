@@ -397,6 +397,9 @@ void daemon_cfg_print_usage(const char *prog)
 "      --burst-threshold N  alert if pid produces >=N mutating events / window\n"
 "      --burst-window-ms MS sliding window (default 1000)\n"
 "      --hook-cooldown-ms MS  per-pid alert cooldown (default 5000)\n"
+"      --job JOBID          begin a job registry block on the command line\n"
+"      --job-rootfs PATH    set the current job's rootfs (also -workspace,\n"
+"                           -export, -cache)\n"
 "      job JOBID             begin a job registry block in config files\n"
 "      rootfs/workspace/export/cache PATH\n"
 "                            set paths for the current config job block\n"
@@ -432,6 +435,11 @@ int daemon_cfg_parse_argv(struct daemon_cfg *c, int argc, char **argv)
 		OPT_PERM,
 		OPT_DENY_ON_ALERT,
 		OPT_NOFID,
+		OPT_JOB,
+		OPT_JOB_ROOTFS,
+		OPT_JOB_WORKSPACE,
+		OPT_JOB_EXPORT,
+		OPT_JOB_CACHE,
 		OPT_VERSION,
 	};
 	static struct option longopts[] = {
@@ -451,12 +459,18 @@ int daemon_cfg_parse_argv(struct daemon_cfg *c, int argc, char **argv)
 		{ "perm",         no_argument,       NULL, OPT_PERM },
 		{ "deny-on-alert", no_argument,      NULL, OPT_DENY_ON_ALERT },
 		{ "no-fid",       no_argument,       NULL, OPT_NOFID },
+		{ "job",          required_argument, NULL, OPT_JOB },
+		{ "job-rootfs",   required_argument, NULL, OPT_JOB_ROOTFS },
+		{ "job-workspace", required_argument, NULL, OPT_JOB_WORKSPACE },
+		{ "job-export",   required_argument, NULL, OPT_JOB_EXPORT },
+		{ "job-cache",    required_argument, NULL, OPT_JOB_CACHE },
 		{ "verbose",      no_argument,       NULL, 'v' },
 		{ "help",         no_argument,       NULL, 'h' },
 		{ "version",      no_argument,       NULL, OPT_VERSION },
 		{ 0, 0, 0, 0 },
 	};
 
+	const char *cli_job_id = NULL;
 	int ch;
 	const char *prog = argv[0];
 	while ((ch = getopt_long(argc, argv, "c:w:o:fvh", longopts, NULL)) != -1) {
@@ -542,6 +556,38 @@ int daemon_cfg_parse_argv(struct daemon_cfg *c, int argc, char **argv)
 		case OPT_PERM:     c->want_perm = 1;    break;
 		case OPT_DENY_ON_ALERT: c->deny_on_alert = 1; break;
 		case OPT_NOFID:    c->want_fid = 0;     break;
+		case OPT_JOB: {
+			struct job_entry *job = daemon_cfg_add_job(c, optarg);
+			if (!job)
+				return -1;
+			cli_job_id = job->job_id;
+			break;
+		}
+		case OPT_JOB_ROOTFS:
+		case OPT_JOB_WORKSPACE:
+		case OPT_JOB_EXPORT:
+		case OPT_JOB_CACHE: {
+			const char *role = "rootfs";
+			const char *flag = "--job-rootfs";
+			if (ch == OPT_JOB_WORKSPACE) {
+				role = "workspace";
+				flag = "--job-workspace";
+			} else if (ch == OPT_JOB_EXPORT) {
+				role = "export";
+				flag = "--job-export";
+			} else if (ch == OPT_JOB_CACHE) {
+				role = "cache";
+				flag = "--job-cache";
+			}
+			if (!cli_job_id) {
+				fprintf(stderr, "fanotifyd: %s requires a preceding --job\n",
+				        flag);
+				return -1;
+			}
+			if (daemon_cfg_set_job_path(c, cli_job_id, role, optarg) < 0)
+				return -1;
+			break;
+		}
 		case 'v':          c->verbose++;        break;
 		case OPT_VERSION:
 			printf("fanotifyd 0.1.0\n");

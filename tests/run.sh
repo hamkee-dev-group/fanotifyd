@@ -239,4 +239,40 @@ run_observe_smoke "$tmpdir"
 run_pivot_mount_smoke "$tmpdir"
 run_perm_smoke "$tmpdir"
 
+run_job_registry_cli() {
+	dir=$(mktemp -d)
+	mkdir -p "$dir/workspace"
+	log="$dir/daemon.log"
+	events="$dir/events.jsonl"
+
+	set +e
+	./fanotifyd --foreground --output "$events" --watch "$dir" \
+		--job-rootfs "$dir" >"$dir/nojob.log" 2>&1
+	rc=$?
+	set -e
+	if [ "$rc" -eq 0 ]; then
+		rm -rf "$dir"
+		fail "--job-rootfs was accepted without a preceding --job"
+	fi
+	require_file_contains "$dir/nojob.log" "requires a preceding --job" \
+		"job path ordering message"
+
+	./fanotifyd --foreground --output "$events" --watch "$dir/workspace" \
+		--job smoke-job --job-rootfs "$dir" \
+		--job-workspace "$dir/workspace" >"$log" 2>&1 &
+	pid=$!
+	wait_for_daemon "$pid" "$log"
+	sleep 1
+	printf 'x\n' > "$dir/workspace/tagged"
+	sleep 1
+	stop_daemon "$pid"
+
+	require_file_contains "$events" '"job_id":"smoke-job"' "job id on events"
+	require_file_contains "$events" '"path_role":"workspace"' "path role on events"
+	rm -rf "$dir"
+	echo "job registry cli ok"
+}
+
+run_job_registry_cli
+
 echo "integration smoke tests passed"
