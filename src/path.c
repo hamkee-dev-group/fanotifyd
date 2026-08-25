@@ -46,7 +46,7 @@ int mount_db_lookup(const struct mount_db *db, const __kernel_fsid_t *fsid)
 
 int mount_db_add_for_path(struct mount_db *db, const char *path)
 {
-	int fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_PATH);
+	int fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 	if (fd < 0) {
 		 
 		char *copy = strdup(path);
@@ -62,7 +62,7 @@ int mount_db_add_for_path(struct mount_db *db, const char *path)
 				dir = copy;
 			}
 		}
-		fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_PATH);
+		fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 		free(copy);
 		if (fd < 0)
 			return -1;

@@ -74,6 +74,12 @@ run_observe_smoke() {
 	rm -f "$watchdir/file.moved"
 
 	cat "$canary" >/dev/null
+	if command -v truncate >/dev/null 2>&1; then
+		truncate -s 3 "$canary"
+		canary_modify_checked=1
+	else
+		canary_modify_checked=0
+	fi
 	printf 'secret\n' >>"$canary"
 	mv "$canary" "$watchdir/canary.moved"
 	rm -f "$watchdir/canary.moved"
@@ -93,6 +99,22 @@ run_observe_smoke() {
 		fail "missing rename event"
 	fi
 	require_file_contains "$outfile" '"events":"[^"]*DELETE' 'DELETE event'
+
+	if grep -q 'fid-unresolved' "$outfile"; then
+		fail "unresolved file handle in observe output"
+	fi
+	if grep -q '<unknown>' "$outfile"; then
+		fail "unresolved event path in observe output"
+	fi
+	require_file_contains "$outfile" "\"path\":\"$watchdir/file\"" 'resolved event path'
+	require_file_contains "$outfile" '"kind":"canary"' 'canary alert'
+	require_file_contains "$outfile" '"reason":"canary opened"' 'canary open alert'
+	require_file_contains "$outfile" '"reason":"canary renamed"' 'canary rename alert'
+	require_file_contains "$outfile" '"reason":"canary deleted"' 'canary delete alert'
+	if [ "$canary_modify_checked" -eq 1 ]; then
+		require_file_contains "$outfile" '"reason":"canary modified"' \
+			'canary modify alert'
+	fi
 }
 
 run_perm_smoke() {

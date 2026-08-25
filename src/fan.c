@@ -101,6 +101,13 @@ int fan_mark(int fanfd, struct mount_db *db, const struct mark_spec *m,
 
 	uint64_t mask = fan_compute_mark_mask(m, want_fid, want_perm);
 
+	if (fan_fid_reporting(want_fid, want_perm) &&
+	    mount_db_add_for_path(db, m->path) < 0) {
+		log_warn("mount_db_add_for_path(%s) failed: %s",
+		         m->path, strerror(errno));
+		 
+	}
+
 	if (fanotify_mark(fanfd, mflags, mask, AT_FDCWD, m->path) < 0) {
 		if (errno == EINVAL && !fan_fid_reporting(want_fid, want_perm) &&
 		    (mask & fan_fid_only_events()) != 0)
@@ -111,11 +118,6 @@ int fan_mark(int fanfd, struct mount_db *db, const struct mark_spec *m,
 		return -1;
 	}
 
-	if (want_fid && !want_perm && mount_db_add_for_path(db, m->path) < 0) {
-		log_warn("mount_db_add_for_path(%s) failed: %s",
-		         m->path, strerror(errno));
-		 
-	}
 	return 0;
 }
 

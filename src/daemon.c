@@ -254,6 +254,10 @@ int daemon_run(struct daemon_cfg *cfg)
 	struct mount_db mdb;
 	mount_db_init(&mdb);
 
+	 
+	for (size_t i = 0; i < cfg->n_canaries; i++)
+		mount_db_add_for_path(&mdb, cfg->canaries[i]);
+
 	for (size_t i = 0; i < cfg->n_marks; i++) {
 		if (fan_mark(fanfd, &mdb, &cfg->marks[i],
 		             use_fid, cfg->want_perm) < 0) {
@@ -268,10 +272,6 @@ int daemon_run(struct daemon_cfg *cfg)
 		log_info("watching %s (type=%d)",
 		         cfg->marks[i].path, (int)cfg->marks[i].type);
 	}
-
-	 
-	for (size_t i = 0; i < cfg->n_canaries; i++)
-		mount_db_add_for_path(&mdb, cfg->canaries[i]);
 
 	if (!cfg->foreground) {
 		if (do_daemonize(cfg->pid_file) < 0) {
